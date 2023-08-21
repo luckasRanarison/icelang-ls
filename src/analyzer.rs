@@ -97,58 +97,102 @@ impl<'a> Analyzer<'a> {
     fn handle_declaration(&mut self, node: &Node) {
         let node_type = NodeType::from(node);
 
-        // TODO: handle scope & function params
         match node_type {
-            NodeType::StmtVarDecl | NodeType::StmtFuncDecl => {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    let name = name_node.utf8_text(&self.source).unwrap();
-                    let range = get_node_range(&name_node);
-                    let start = point_to_position(node.end_position());
-                    let parent = node.parent();
-                    let mut scope = None;
-
-                    if let Some(parent) = parent {
-                        if NodeType::from(&parent) == NodeType::StmtBlock {
-                            scope = Some(get_node_range(&parent));
-                        }
-                    }
-
-                    let kind = match node_type {
-                        NodeType::StmtVarDecl => DeclarationKind::Variable(None),
-                        NodeType::StmtFuncDecl => DeclarationKind::Function(vec![]),
-                        _ => unreachable!(),
-                    };
-                    let declaration = Declaration {
-                        name: name.to_owned(),
-                        kind,
-                        start,
-                        scope,
-                    };
-                    let inserted = self.declarations.insert(declaration);
-
-                    if !inserted {
-                        self.diagnostics
-                            .push(error(ErrorKind::Redeclaration(name.to_owned()), range));
-                    }
-                }
+            NodeType::StmtVarDecl => {
+                self.handle_var_declaration(node);
+            }
+            NodeType::StmtFuncDecl => {
+                self.handle_func_declaration(node);
             }
             _ => {}
+        }
+    }
+
+    // TODO: handle variable type
+    fn handle_var_declaration(&mut self, node: &Node) {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let name = name_node.utf8_text(&self.source).unwrap();
+            let kind = DeclarationKind::Variable(None);
+            let start = point_to_position(node.end_position());
+            let parent = node.parent();
+            let mut scope = None;
+
+            if let Some(parent) = parent {
+                if NodeType::from(&parent) == NodeType::StmtBlock {
+                    scope = Some(get_node_range(&parent));
+                }
+            }
+
+            let declaration = Declaration {
+                name: name.to_owned(),
+                kind,
+                start,
+                scope,
+            };
+            let inserted = self.declarations.insert(declaration);
+
+            if !inserted {
+                let range = get_node_range(&name_node);
+
+                self.diagnostics
+                    .push(error(ErrorKind::Redeclaration(name.to_owned()), range));
+            }
+        }
+    }
+
+    // TODO: handle function params
+    fn handle_func_declaration(&mut self, node: &Node) {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let name = name_node.utf8_text(&self.source).unwrap();
+            let kind = DeclarationKind::Function(vec![]);
+            let block = node.child_by_field_name("body").unwrap();
+            let start = point_to_position(block.start_position());
+            let parent = node.parent();
+            let mut scope = None;
+
+            if let Some(parent) = parent {
+                if NodeType::from(&parent) == NodeType::StmtBlock {
+                    scope = Some(get_node_range(&parent));
+                }
+            }
+
+            let declaration = Declaration {
+                name: name.to_owned(),
+                kind,
+                start,
+                scope,
+            };
+            let inserted = self.declarations.insert(declaration);
+
+            if !inserted {
+                let range = get_node_range(&name_node);
+
+                self.diagnostics
+                    .push(error(ErrorKind::Redeclaration(name.to_owned()), range));
+            }
         }
     }
 
     fn handle_runtime_exception(&mut self, node: &Node) {
         match NodeType::from(node) {
             NodeType::ExprIdentifier => {
+                let mut is_valid = true;
                 let name = node.utf8_text(&self.source).unwrap();
                 let range = get_node_range(&node);
                 let parent = node.parent();
 
                 if let Some(parent) = parent {
-                    match NodeType::from(&parent) {
-                        NodeType::StmtVarDecl | NodeType::StmtFuncDecl | NodeType::Args => {}
-                        _ => self.identifiers.push((name.to_owned(), range)),
+                    is_valid = match NodeType::from(&parent) {
+                        NodeType::StmtFuncDecl | NodeType::Args => false,
+                        NodeType::StmtVarDecl => match parent.child_by_field_name("value") {
+                            Some(value) => value == *node,
+                            None => false,
+                        },
+                        _ => true,
                     }
-                } else {
+                }
+
+                if is_valid {
                     self.identifiers.push((name.to_owned(), range));
                 }
             }

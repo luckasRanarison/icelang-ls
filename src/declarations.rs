@@ -1,8 +1,9 @@
-use std::{cmp::Ordering, collections::HashMap};
+use std::collections::HashMap;
 
 use tower_lsp::lsp_types::{Position, Range};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// TODO: type check
+#[derive(Debug, Clone)]
 pub enum VariableType {
     Any,
     Null,
@@ -13,7 +14,7 @@ pub enum VariableType {
     Function,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum DeclarationKind {
     Variable(Option<VariableType>),
     Function(Vec<String>),
@@ -28,7 +29,7 @@ impl DeclarationKind {
     }
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone)]
 pub struct Declaration {
     pub name: String,
     pub kind: DeclarationKind,
@@ -39,26 +40,6 @@ pub struct Declaration {
 impl PartialEq for Declaration {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name && self.scope == other.scope
-    }
-}
-
-impl PartialOrd for Declaration {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.start < other.start {
-            Some(Ordering::Less)
-        } else {
-            Some(Ordering::Greater)
-        }
-    }
-}
-
-impl Ord for Declaration {
-    fn cmp(&self, other: &Self) -> Ordering {
-        if self.start < other.start {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
     }
 }
 
@@ -116,28 +97,41 @@ impl DeclarationMap {
         let mut result = Vec::new();
 
         for (_, declarations) in &self.map {
-            for decl in declarations {
-                let is_function = decl.kind.is_function();
-                let inside_scope = match decl.scope {
-                    Some(scope) => position > scope.start && position < scope.end,
-                    None => true,
-                };
+            let nearest = self.get_nearest(declarations, position);
 
-                if (position > decl.start || is_function) && inside_scope {
-                    result.push(decl.clone());
-                }
+            if let Some(nearest) = nearest {
+                result.push(nearest);
             }
         }
 
         result
     }
 
-    // FIXME: get the nearest to avoid duplication
-    // fn get_nearest(
-    //     &self,
-    //     declarations: &Vec<Declaration>,
-    //     position: Position,
-    // ) -> Option<Declaration> {
-    //     declarations.iter().max().cloned()
-    // }
+    fn get_nearest(
+        &self,
+        declarations: &Vec<Declaration>,
+        position: Position,
+    ) -> Option<Declaration> {
+        let mut nearest: Option<Declaration> = None;
+
+        for decl in declarations {
+            let is_function = decl.kind.is_function();
+            let inside_scope = match decl.scope {
+                Some(scope) => position > scope.start && position < scope.end,
+                None => true,
+            };
+
+            if (position > decl.start || is_function) && inside_scope {
+                if let Some(value) = &nearest {
+                    if decl.start > value.start {
+                        nearest = Some(decl).cloned();
+                    }
+                } else {
+                    nearest = Some(decl).cloned();
+                }
+            }
+        }
+
+        nearest
+    }
 }
