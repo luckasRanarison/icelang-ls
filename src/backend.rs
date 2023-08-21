@@ -2,7 +2,7 @@ use dashmap::DashMap;
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
 
 use crate::{
-    analyzer::analyze, completion::KEYWORDS, declarations::DeclarationKind, document::Document,
+    analyzer::analyze, completion::KEYWORDS, document::Document, declarations::DeclarationKind,
 };
 
 pub struct Backend {
@@ -57,13 +57,13 @@ impl LanguageServer for Backend {
 
             let content = &document.content.as_bytes();
             let tree = &document.tree;
-            let (diagnostics, declarations) = analyze(content, tree);
+            let result= analyze(content, tree);
 
-            document.declarations = declarations;
+            document.declarations = result.declarations;
 
             self.document_map.insert(uri.to_string(), document);
             self.client
-                .publish_diagnostics(uri, diagnostics, Some(version))
+                .publish_diagnostics(uri, result.diagnostics, Some(version))
                 .await;
         } else {
             self.client
@@ -81,12 +81,12 @@ impl LanguageServer for Backend {
 
             let content = &document.content.as_bytes();
             let tree = &document.tree;
-            let (diagnostics, declarations) = analyze(content, tree);
+            let result= analyze(content, tree);
 
-            document.declarations = declarations;
+            document.declarations = result.declarations;
 
             self.client
-                .publish_diagnostics(uri, diagnostics, Some(version))
+                .publish_diagnostics(uri, result.diagnostics, Some(version))
                 .await;
         }
     }
@@ -117,23 +117,19 @@ impl LanguageServer for Backend {
         }
 
         if let Some(document) = self.document_map.get(&uri.to_string()) {
-            document.declarations.iter().for_each(|(key, value)| {
-                let kind = match value.kind {
+            for decl in document.declarations.get_declared_at(position) {
+                let kind = match decl.kind {
                     DeclarationKind::Variable(_) => CompletionItemKind::VARIABLE,
                     DeclarationKind::Function(_) => CompletionItemKind::FUNCTION,
                 };
-                let is_variable = kind == CompletionItemKind::VARIABLE;
-
-                // TODO: scoping
-                if (is_variable && position > value.end_pos) || !is_variable  {
-                    completions.push(CompletionItem {
-                        label: key.to_owned(),
-                        insert_text: Some(key.to_owned()),
-                        kind: Some(kind),
-                        ..Default::default()
-                    });
-                }
-            });
+                
+                completions.push(CompletionItem {
+                    label: decl.name.clone(),
+                    insert_text: Some(decl.name),
+                    kind: Some(kind),
+                    ..Default::default()
+                });
+            }
         }
 
         Ok(Some(completions).map(CompletionResponse::Array))

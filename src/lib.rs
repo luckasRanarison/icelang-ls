@@ -1,4 +1,5 @@
 pub mod analyzer;
+pub mod ast;
 pub mod backend;
 pub mod completion;
 pub mod declarations;

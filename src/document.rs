@@ -1,15 +1,13 @@
-use std::collections::HashMap;
-
 use tower_lsp::lsp_types::{DidChangeTextDocumentParams, DidOpenTextDocumentParams};
 use tree_sitter::{Parser, Tree};
 
-use crate::declarations::Declaration;
+use crate::declarations::DeclarationMap;
 
 pub struct Document {
     pub content: String,
     pub tree: Tree,
     pub parser: Parser,
-    pub declarations: HashMap<String, Declaration>,
+    pub declarations: DeclarationMap,
 }
 
 impl Document {
@@ -22,7 +20,7 @@ impl Document {
             .expect("Error loading icelang grammar");
 
         let tree = parser.parse(&content, None)?;
-        let declarations = HashMap::new();
+        let declarations = DeclarationMap::new();
 
         Some(Self {
             content,

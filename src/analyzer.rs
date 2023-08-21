@@ -1,24 +1,28 @@
-use std::collections::HashMap;
-
 use tower_lsp::lsp_types::{Diagnostic, Range};
 use tree_sitter::{Node, Tree};
 
 use crate::{
-    declarations::{Declaration, DeclarationKind},
+    ast::NodeType,
+    declarations::{Declaration, DeclarationKind, DeclarationMap},
     diagnostic::{error, ErrorKind},
     utils::{get_node_range, point_to_position},
 };
 
-pub fn analyze(source: &[u8], tree: &Tree) -> (Vec<Diagnostic>, HashMap<String, Declaration>) {
+pub fn analyze(source: &[u8], tree: &Tree) -> AnalyzeResult {
     Analyzer::new(source, tree).analyze()
+}
+
+pub struct AnalyzeResult {
+    pub diagnostics: Vec<Diagnostic>,
+    pub declarations: DeclarationMap,
 }
 
 struct Analyzer<'a> {
     source: &'a [u8],
     tree: &'a Tree,
     diagnostics: Vec<Diagnostic>,
-    declarations: HashMap<String, Declaration>,
-    undeclared: HashMap<String, Range>,
+    declarations: DeclarationMap,
+    identifiers: Vec<(String, Range)>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -26,13 +30,13 @@ impl<'a> Analyzer<'a> {
         Self {
             source,
             tree,
-            diagnostics: vec![],
-            declarations: HashMap::new(),
-            undeclared: HashMap::new(),
+            diagnostics: Vec::new(),
+            declarations: DeclarationMap::new(),
+            identifiers: Vec::new(),
         }
     }
 
-    fn analyze(&mut self) -> (Vec<Diagnostic>, HashMap<String, Declaration>) {
+    fn analyze(&mut self) -> AnalyzeResult {
         let tree = self.tree.clone();
         let root_node = tree.root_node();
         let mut cursor = Node::walk(&root_node);
@@ -43,7 +47,10 @@ impl<'a> Analyzer<'a> {
 
         self.resolve_identifiers();
 
-        (self.diagnostics.clone(), self.declarations.clone())
+        AnalyzeResult {
+            diagnostics: self.diagnostics.clone(),
+            declarations: self.declarations.clone(),
+        }
     }
 
     fn eval_node(&mut self, node: &Node) {
@@ -65,8 +72,8 @@ impl<'a> Analyzer<'a> {
             let error = match child {
                 Some(child) => {
                     let child_range = get_node_range(&child);
-                    match child.kind() {
-                        "expr_identifier" => error(ErrorKind::SyntaxError, child_range),
+                    match NodeType::from(&child) {
+                        NodeType::ExprIdentifier => error(ErrorKind::SyntaxError, child_range),
                         _ => error(ErrorKind::Unexpected, child_range),
                     }
                 }
@@ -78,8 +85,8 @@ impl<'a> Analyzer<'a> {
 
         if node.is_missing() {
             let range = get_node_range(&node);
-            let error = match node.kind() {
-                "expr_identifier" => error(ErrorKind::ExpectedExpr, range),
+            let error = match NodeType::from(node) {
+                NodeType::ExprIdentifier => error(ErrorKind::ExpectedExpr, range),
                 _ => error(ErrorKind::Missing(node.kind().to_owned()), range),
             };
 
@@ -88,44 +95,40 @@ impl<'a> Analyzer<'a> {
     }
 
     fn handle_declaration(&mut self, node: &Node) {
+        let node_type = NodeType::from(node);
+
         // TODO: handle scope & function params
-        match node.kind() {
-            "stmt_var_decl" => {
+        match node_type {
+            NodeType::StmtVarDecl | NodeType::StmtFuncDecl => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = name_node.utf8_text(&self.source).unwrap();
-                    let range = get_node_range(&node);
-                    let end_pos = point_to_position(node.end_position());
-                    let declaration = Declaration {
-                        kind: DeclarationKind::Variable(None),
-                        end_pos,
-                        scope: None,
-                    };
+                    let range = get_node_range(&name_node);
+                    let start = point_to_position(node.end_position());
+                    let parent = node.parent();
+                    let mut scope = None;
 
-                    if self.declarations.contains_key(name) {
-                        self.diagnostics
-                            .push(error(ErrorKind::Redeclaration(name.to_owned()), range));
-                    } else {
-                        self.declarations.insert(name.to_owned(), declaration);
+                    if let Some(parent) = parent {
+                        if NodeType::from(&parent) == NodeType::StmtBlock {
+                            scope = Some(get_node_range(&parent));
+                        }
                     }
-                }
-            }
-            "stmt_func_decl" => {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    let name = name_node.utf8_text(&self.source).unwrap();
-                    let range = get_node_range(&node);
-                    let end_pos = point_to_position(node.end_position());
-                    let declaration = Declaration {
-                        kind: DeclarationKind::Function(vec![]),
-                        end_pos,
-                        scope: None,
-                    };
 
-                    if self.declarations.contains_key(name) {
+                    let kind = match node_type {
+                        NodeType::StmtVarDecl => DeclarationKind::Variable(None),
+                        NodeType::StmtFuncDecl => DeclarationKind::Function(vec![]),
+                        _ => unreachable!(),
+                    };
+                    let declaration = Declaration {
+                        name: name.to_owned(),
+                        kind,
+                        start,
+                        scope,
+                    };
+                    let inserted = self.declarations.insert(declaration);
+
+                    if !inserted {
                         self.diagnostics
                             .push(error(ErrorKind::Redeclaration(name.to_owned()), range));
-                    } else {
-                        self.undeclared.remove(name); // hoisting
-                        self.declarations.insert(name.to_owned(), declaration);
                     }
                 }
             }
@@ -134,13 +137,19 @@ impl<'a> Analyzer<'a> {
     }
 
     fn handle_runtime_exception(&mut self, node: &Node) {
-        match node.kind() {
-            "expr_identifier" => {
+        match NodeType::from(node) {
+            NodeType::ExprIdentifier => {
                 let name = node.utf8_text(&self.source).unwrap();
                 let range = get_node_range(&node);
+                let parent = node.parent();
 
-                if !self.declarations.contains_key(name) {
-                    self.undeclared.insert(name.to_owned(), range);
+                if let Some(parent) = parent {
+                    match NodeType::from(&parent) {
+                        NodeType::StmtVarDecl | NodeType::StmtFuncDecl | NodeType::Args => {}
+                        _ => self.identifiers.push((name.to_owned(), range)),
+                    }
+                } else {
+                    self.identifiers.push((name.to_owned(), range));
                 }
             }
             _ => {}
@@ -148,9 +157,13 @@ impl<'a> Analyzer<'a> {
     }
 
     fn resolve_identifiers(&mut self) {
-        for (name, range) in &self.undeclared {
-            self.diagnostics
-                .push(error(ErrorKind::Undeclared(name.to_owned()), *range));
+        for (name, range) in &self.identifiers {
+            let is_declared = self.declarations.is_declared(name, range);
+
+            if !is_declared {
+                self.diagnostics
+                    .push(error(ErrorKind::Undeclared(name.to_owned()), *range));
+            }
         }
     }
 }
