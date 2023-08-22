@@ -10,6 +10,7 @@ pub enum VariableType {
     Boolean,
     Number,
     String,
+    Array,
     Object(Vec<String>),
     Function(Vec<String>),
 }
@@ -89,7 +90,7 @@ impl DeclarationMap {
         true
     }
 
-    pub fn is_declared_at(&mut self, name: &String, position: Position) -> bool {
+    pub fn is_declared_at(&mut self, name: &str, position: Position) -> bool {
         if let Some(declarations) = self.map.get(name) {
             for decl in declarations {
                 if is_declaration_at(decl, position) {

@@ -102,35 +102,48 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    // TODO: handle variable type
     fn eval_var_decl(&mut self, node: &Node) {
-        if let Some(name_node) = node.child_by_field_name("name") {
-            let name = name_node.utf8_text(&self.source).unwrap();
-            let kind = DeclarationKind::Variable(VariableType::Any);
-            let range = tsrange_to_lsprange(node.range());
-            let parent = node.parent();
-            let mut scope = None;
+        let name_node = node.child_by_field_name("name").unwrap();
+        let name = name_node.utf8_text(&self.source).unwrap();
+        let value_node = node.child_by_field_name("value").unwrap();
+        let mut scope = None;
 
-            if let Some(parent) = parent {
-                if NodeType::from(&parent) == NodeType::StmtBlock {
-                    scope = Some(get_node_range(&parent));
+        if let Some(parent) = node.parent() {
+            if NodeType::from(&parent) == NodeType::StmtBlock {
+                scope = Some(get_node_range(&parent));
+            }
+        }
+
+        let declaration = match NodeType::from(&value_node) {
+            NodeType::ExprLambda => {
+                let body = value_node.child_by_field_name("body").unwrap();
+                let (names, args_decl) = self.get_function_args(&value_node);
+                let kind = DeclarationKind::Function(names);
+
+                let range = Range::new(
+                    point_to_position(node.start_position()),
+                    point_to_position(body.start_position()),
+                );
+
+                for decl in args_decl {
+                    self.declarations.insert(decl);
                 }
+
+                Declaration::new(name.to_owned(), kind, range, scope)
             }
+            _ => {
+                let kind = DeclarationKind::Variable(self.get_var_type(&value_node));
+                let range = tsrange_to_lsprange(node.range());
 
-            let declaration = Declaration {
-                name: name.to_owned(),
-                kind,
-                range,
-                scope,
-            };
-            let inserted = self.declarations.insert(declaration);
-
-            if !inserted {
-                let name_range = get_node_range(&name_node);
-
-                self.diagnostics
-                    .push(error(ErrorKind::Redeclaration(name.to_owned()), name_range));
+                Declaration::new(name.to_owned(), kind, range, scope)
             }
+        };
+
+        if !self.declarations.insert(declaration) {
+            self.diagnostics.push(error(
+                ErrorKind::Redeclaration(name.to_owned()),
+                get_node_range(&name_node),
+            ));
         }
     }
 
@@ -138,7 +151,7 @@ impl<'a> Analyzer<'a> {
         let name_node = node.child_by_field_name("name").unwrap();
         let block = node.child_by_field_name("body").unwrap();
 
-        let (names, args_decl) = self.get_args(&node);
+        let (names, args_decl) = self.get_function_args(&node);
         let name = name_node.utf8_text(&self.source).unwrap();
         let kind = DeclarationKind::Function(names);
 
@@ -202,7 +215,41 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn get_args(&mut self, node: &Node) -> (Vec<String>, Vec<Declaration>) {
+    // TODO: dynamic type resolution
+    fn get_var_type(&mut self, node: &Node) -> VariableType {
+        match NodeType::from(node) {
+            NodeType::ExprLiteral => {
+                let literal = node.child(0).unwrap();
+
+                match literal.kind() {
+                    "number" => VariableType::Number,
+                    "string" => VariableType::String,
+                    "boolean" => VariableType::Boolean,
+                    "null" => VariableType::Null,
+                    _ => VariableType::Any,
+                }
+            }
+            NodeType::ExprObject => {
+                let mut props = Vec::new();
+                let mut cursor = Node::walk(&node);
+
+                for prop in node.children(&mut cursor) {
+                    if NodeType::from(&prop) == NodeType::Prop {
+                        let name_node = prop.child_by_field_name("name").unwrap();
+                        let name = name_node.utf8_text(&self.source).unwrap();
+
+                        props.push(name.to_owned())
+                    }
+                }
+
+                VariableType::Object(props)
+            }
+            NodeType::ExprArray => VariableType::Array,
+            _ => VariableType::Any,
+        }
+    }
+
+    fn get_function_args(&self, node: &Node) -> (Vec<String>, Vec<Declaration>) {
         let mut names = Vec::new();
         let mut declarations = Vec::new();
         let body = node.child_by_field_name("body").unwrap();
