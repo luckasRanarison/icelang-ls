@@ -200,7 +200,10 @@ fn skip_identifer(node: &Node) -> bool {
         let name_node = parent.child_by_field_name("name");
 
         match NodeType::from(&parent) {
-            NodeType::StmtFuncDecl | NodeType::Args | NodeType::ExprField => true,
+            NodeType::StmtFuncDecl
+            | NodeType::Args
+            | NodeType::ExprField
+            | NodeType::Iterator => true,
             NodeType::StmtVarDecl | NodeType::Prop => name_node == Some(*node),
             _ => false,
         }

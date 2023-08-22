@@ -28,6 +28,7 @@ pub enum NodeType {
 
     Args,
     Prop,
+    Iterator,
 
     Error,
     Unnamed,
@@ -62,6 +63,7 @@ impl From<&Node<'_>> for NodeType {
 
             "args" => NodeType::Args,
             "prop" => NodeType::Prop,
+            "iterator" => NodeType::Iterator,
 
             "ERROR" => NodeType::Error,
             _ => NodeType::Unnamed,
