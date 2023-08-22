@@ -3,7 +3,7 @@ use tree_sitter::{Node, Tree};
 
 use crate::{
     ast::{NodeType, FUNCTION_NODE, LOOP_NODE},
-    declarations::{Declaration, DeclarationKind, DeclarationMap},
+    declarations::{Declaration, DeclarationKind, DeclarationMap, VariableType},
     diagnostic::{error, hint, ErrorKind, HintKind},
     utils::*,
 };
@@ -106,7 +106,7 @@ impl<'a> Analyzer<'a> {
     fn eval_var_decl(&mut self, node: &Node) {
         if let Some(name_node) = node.child_by_field_name("name") {
             let name = name_node.utf8_text(&self.source).unwrap();
-            let kind = DeclarationKind::Variable(None);
+            let kind = DeclarationKind::Variable(VariableType::Any);
             let range = tsrange_to_lsprange(node.range());
             let parent = node.parent();
             let mut scope = None;
@@ -134,40 +134,35 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    // TODO: handle function params
     fn eval_func_decl(&mut self, node: &Node) {
-        if let Some(name_node) = node.child_by_field_name("name") {
-            let name = name_node.utf8_text(&self.source).unwrap();
-            let kind = DeclarationKind::Function(vec![]);
-            let block = node.child_by_field_name("body").unwrap();
+        let name_node = node.child_by_field_name("name").unwrap();
+        let block = node.child_by_field_name("body").unwrap();
 
-            let start = point_to_position(node.start_position());
-            let end = point_to_position(block.start_position());
-            let range = Range::new(start, end);
+        let (names, args_decl) = self.get_args(&node);
+        let name = name_node.utf8_text(&self.source).unwrap();
+        let kind = DeclarationKind::Function(names);
 
-            let parent = node.parent();
-            let mut scope = None;
+        let range = Range::new(
+            point_to_position(node.start_position()),
+            point_to_position(block.start_position()),
+        );
 
-            if let Some(parent) = parent {
-                if NodeType::from(&parent) == NodeType::StmtBlock {
-                    scope = Some(get_node_range(&parent));
-                }
-            }
+        let scope = node
+            .parent()
+            .filter(|parent| NodeType::from(parent) == NodeType::StmtBlock)
+            .map(|parent| get_node_range(&parent));
 
-            let declaration = Declaration {
-                name: name.to_owned(),
-                kind,
-                range,
-                scope,
-            };
-            let inserted = self.declarations.insert(declaration);
+        for decl in args_decl {
+            self.declarations.insert(decl);
+        }
 
-            if !inserted {
-                let range = get_node_range(&name_node);
+        let declaration = Declaration::new(name.to_owned(), kind, range, scope);
 
-                self.diagnostics
-                    .push(error(ErrorKind::Redeclaration(name.to_owned()), range));
-            }
+        if !self.declarations.insert(declaration) {
+            self.diagnostics.push(error(
+                ErrorKind::Redeclaration(name.to_owned()),
+                get_node_range(&name_node),
+            ));
         }
     }
 
@@ -205,6 +200,29 @@ impl<'a> Analyzer<'a> {
             self.diagnostics
                 .push(error(ErrorKind::ReturnOutside, get_node_range(node)));
         }
+    }
+
+    fn get_args(&mut self, node: &Node) -> (Vec<String>, Vec<Declaration>) {
+        let mut names = Vec::new();
+        let mut declarations = Vec::new();
+        let body = node.child_by_field_name("body").unwrap();
+        let args = node.child_by_field_name("args").unwrap();
+        let mut cursor = Node::walk(&args);
+
+        for arg in args.named_children(&mut cursor) {
+            let name = arg.utf8_text(&self.source).unwrap();
+            let declaration = Declaration {
+                name: name.to_string(),
+                kind: DeclarationKind::Variable(VariableType::Any),
+                range: get_node_range(&args),
+                scope: Some(get_node_range(&body)),
+            };
+
+            names.push(name.to_owned());
+            declarations.push(declaration)
+        }
+
+        (names, declarations)
     }
 
     fn next_unreachable(&mut self, node: &Node) {
@@ -258,18 +276,20 @@ impl<'a> Analyzer<'a> {
 
 fn skip_identifer(node: &Node) -> bool {
     if let Some(parent) = node.parent() {
-        let name_node = parent.child_by_field_name("name");
-
         return match NodeType::from(&parent) {
-            NodeType::StmtFuncDecl | NodeType::Args | NodeType::ExprField | NodeType::Iterator => {
-                true
+            NodeType::StmtFuncDecl | NodeType::ExprField | NodeType::Iterator => true,
+            NodeType::StmtVarDecl | NodeType::Prop => {
+                parent.child_by_field_name("name") == Some(*node)
             }
-            NodeType::StmtVarDecl | NodeType::Prop => name_node == Some(*node),
+            NodeType::Args => match parent.parent() {
+                Some(value) => NodeType::from(&value) != NodeType::ExprCall,
+                None => false,
+            },
             _ => false,
         };
-    } else {
-        false
     }
+
+    false
 }
 
 fn has_parent(node: &Node, parent_types: &[NodeType]) -> bool {

@@ -10,13 +10,13 @@ pub enum VariableType {
     Boolean,
     Number,
     String,
-    Object,
-    Function,
+    Object(Vec<String>),
+    Function(Vec<String>),
 }
 
 #[derive(Debug, Clone)]
 pub enum DeclarationKind {
-    Variable(Option<VariableType>),
+    Variable(VariableType),
     Function(Vec<String>),
 }
 
@@ -40,6 +40,22 @@ pub struct Declaration {
 impl PartialEq for Declaration {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name && self.scope == other.scope
+    }
+}
+
+impl Declaration {
+    pub fn new(
+        name: String,
+        kind: DeclarationKind,
+        range: Range,
+        scope: Option<Range>,
+    ) -> Declaration {
+        Self {
+            name,
+            kind,
+            range,
+            scope,
+        }
     }
 }
 
