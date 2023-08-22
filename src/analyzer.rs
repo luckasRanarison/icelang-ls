@@ -179,6 +179,12 @@ impl<'a> Analyzer<'a> {
 
     fn resolve_identifiers(&mut self) {
         for (name, range) in &self.identifiers {
+            if name == "" {
+                self.diagnostics
+                    .push(error(ErrorKind::ExpectedField, *range));
+                continue;
+            }
+
             let is_declared = self.declarations.is_declared_at(name, range.end);
 
             if !is_declared {
@@ -194,8 +200,8 @@ fn skip_identifer(node: &Node) -> bool {
         let name_node = parent.child_by_field_name("name");
 
         match NodeType::from(&parent) {
-            NodeType::StmtFuncDecl | NodeType::Args => true,
-            NodeType::StmtVarDecl => name_node == Some(*node),
+            NodeType::StmtFuncDecl | NodeType::Args | NodeType::ExprField => true,
+            NodeType::StmtVarDecl | NodeType::Prop => name_node == Some(*node),
             _ => false,
         }
     } else {

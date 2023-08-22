@@ -25,7 +25,9 @@ pub enum NodeType {
     ExprMatch,
     ExprCall,
     ExprLambda,
+
     Args,
+    Prop,
 
     Error,
     Unnamed,
@@ -57,7 +59,9 @@ impl From<&Node<'_>> for NodeType {
             "expr_match" => NodeType::ExprMatch,
             "expr_call" => NodeType::ExprCall,
             "expr_lambda" => NodeType::ExprLambda,
+
             "args" => NodeType::Args,
+            "prop" => NodeType::Prop,
 
             "ERROR" => NodeType::Error,
             _ => NodeType::Unnamed,
