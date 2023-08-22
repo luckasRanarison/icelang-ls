@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 
 use tower_lsp::lsp_types::{Position, Range};
 
@@ -33,7 +33,7 @@ impl DeclarationKind {
 pub struct Declaration {
     pub name: String,
     pub kind: DeclarationKind,
-    pub start: Position,
+    pub range: Range,
     pub scope: Option<Range>,
 }
 
@@ -73,19 +73,11 @@ impl DeclarationMap {
         true
     }
 
-    pub fn is_declared(&mut self, name: &String, range: &Range) -> bool {
+    pub fn is_declared_at(&mut self, name: &String, position: Position) -> bool {
         if let Some(declarations) = self.map.get(name) {
             for decl in declarations {
-                let is_function = decl.kind.is_function();
-                let inside_scope = match decl.scope {
-                    Some(scope) => range.end > scope.start && range.end < scope.end,
-                    None => true,
-                };
-
-                if (range.end > decl.start || is_function) && inside_scope {
+                if is_declaration_at(decl, position) {
                     return true;
-                } else {
-                    return false;
                 }
             }
         }
@@ -96,7 +88,7 @@ impl DeclarationMap {
     pub fn get_declared_at(&self, position: Position) -> Vec<Declaration> {
         let mut result = Vec::new();
 
-        for (_, declarations) in &self.map {
+        for declarations in self.map.values() {
             let nearest = self.get_nearest(declarations, position);
 
             if let Some(nearest) = nearest {
@@ -115,15 +107,9 @@ impl DeclarationMap {
         let mut nearest: Option<Declaration> = None;
 
         for decl in declarations {
-            let is_function = decl.kind.is_function();
-            let inside_scope = match decl.scope {
-                Some(scope) => position > scope.start && position < scope.end,
-                None => true,
-            };
-
-            if (position > decl.start || is_function) && inside_scope {
+            if is_declaration_at(decl, position) {
                 if let Some(value) = &nearest {
-                    if decl.start > value.start {
+                    if decl.range.end > value.range.end {
                         nearest = Some(decl).cloned();
                     }
                 } else {
@@ -134,4 +120,17 @@ impl DeclarationMap {
 
         nearest
     }
+}
+
+fn is_declaration_at(decl: &Declaration, position: Position) -> bool {
+    let condition = match decl.kind.is_function() {
+        true => position < decl.range.start || position > decl.range.end,
+        false => position > decl.range.end,
+    };
+    let inside_scope = match decl.scope {
+        Some(scope) => position > scope.start && position < scope.end,
+        None => true,
+    };
+
+    condition && inside_scope
 }

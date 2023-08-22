@@ -5,7 +5,7 @@ use crate::{
     ast::NodeType,
     declarations::{Declaration, DeclarationKind, DeclarationMap},
     diagnostic::{error, ErrorKind},
-    utils::{get_node_range, point_to_position},
+    utils::*,
 };
 
 pub fn analyze(source: &[u8], tree: &Tree) -> AnalyzeResult {
@@ -55,8 +55,13 @@ impl<'a> Analyzer<'a> {
 
     fn eval_node(&mut self, node: &Node) {
         self.handle_syntax_error(node);
-        self.handle_declaration(node);
-        self.handle_runtime_exception(node);
+
+        match NodeType::from(node) {
+            NodeType::StmtVarDecl => self.eval_var_decl(node),
+            NodeType::StmtFuncDecl => self.eval_func_decl(node),
+            NodeType::ExprIdentifier => self.eval_identifier(node),
+            _ => {}
+        }
 
         let mut cursor = Node::walk(node);
 
@@ -94,26 +99,12 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn handle_declaration(&mut self, node: &Node) {
-        let node_type = NodeType::from(node);
-
-        match node_type {
-            NodeType::StmtVarDecl => {
-                self.handle_var_declaration(node);
-            }
-            NodeType::StmtFuncDecl => {
-                self.handle_func_declaration(node);
-            }
-            _ => {}
-        }
-    }
-
     // TODO: handle variable type
-    fn handle_var_declaration(&mut self, node: &Node) {
+    fn eval_var_decl(&mut self, node: &Node) {
         if let Some(name_node) = node.child_by_field_name("name") {
             let name = name_node.utf8_text(&self.source).unwrap();
             let kind = DeclarationKind::Variable(None);
-            let start = point_to_position(node.end_position());
+            let range = tsrange_to_lsprange(node.range());
             let parent = node.parent();
             let mut scope = None;
 
@@ -126,27 +117,31 @@ impl<'a> Analyzer<'a> {
             let declaration = Declaration {
                 name: name.to_owned(),
                 kind,
-                start,
+                range,
                 scope,
             };
             let inserted = self.declarations.insert(declaration);
 
             if !inserted {
-                let range = get_node_range(&name_node);
+                let name_range = get_node_range(&name_node);
 
                 self.diagnostics
-                    .push(error(ErrorKind::Redeclaration(name.to_owned()), range));
+                    .push(error(ErrorKind::Redeclaration(name.to_owned()), name_range));
             }
         }
     }
 
     // TODO: handle function params
-    fn handle_func_declaration(&mut self, node: &Node) {
+    fn eval_func_decl(&mut self, node: &Node) {
         if let Some(name_node) = node.child_by_field_name("name") {
             let name = name_node.utf8_text(&self.source).unwrap();
             let kind = DeclarationKind::Function(vec![]);
             let block = node.child_by_field_name("body").unwrap();
-            let start = point_to_position(block.start_position());
+
+            let start = point_to_position(node.start_position());
+            let end = point_to_position(block.start_position());
+            let range = Range::new(start, end);
+
             let parent = node.parent();
             let mut scope = None;
 
@@ -159,7 +154,7 @@ impl<'a> Analyzer<'a> {
             let declaration = Declaration {
                 name: name.to_owned(),
                 kind,
-                start,
+                range,
                 scope,
             };
             let inserted = self.declarations.insert(declaration);
@@ -173,41 +168,37 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn handle_runtime_exception(&mut self, node: &Node) {
-        match NodeType::from(node) {
-            NodeType::ExprIdentifier => {
-                let mut is_valid = true;
-                let name = node.utf8_text(&self.source).unwrap();
-                let range = get_node_range(&node);
-                let parent = node.parent();
+    fn eval_identifier(&mut self, node: &Node) {
+        let name = node.utf8_text(&self.source).unwrap();
+        let range = get_node_range(&node);
 
-                if let Some(parent) = parent {
-                    is_valid = match NodeType::from(&parent) {
-                        NodeType::StmtFuncDecl | NodeType::Args => false,
-                        NodeType::StmtVarDecl => match parent.child_by_field_name("value") {
-                            Some(value) => value == *node,
-                            None => false,
-                        },
-                        _ => true,
-                    }
-                }
-
-                if is_valid {
-                    self.identifiers.push((name.to_owned(), range));
-                }
-            }
-            _ => {}
+        if !skip_identifer(node) {
+            self.identifiers.push((name.to_owned(), range));
         }
     }
 
     fn resolve_identifiers(&mut self) {
         for (name, range) in &self.identifiers {
-            let is_declared = self.declarations.is_declared(name, range);
+            let is_declared = self.declarations.is_declared_at(name, range.end);
 
             if !is_declared {
                 self.diagnostics
                     .push(error(ErrorKind::Undeclared(name.to_owned()), *range));
             }
         }
+    }
+}
+
+fn skip_identifer(node: &Node) -> bool {
+    if let Some(parent) = node.parent() {
+        let name_node = parent.child_by_field_name("name");
+
+        match NodeType::from(&parent) {
+            NodeType::StmtFuncDecl | NodeType::Args => true,
+            NodeType::StmtVarDecl => name_node == Some(*node),
+            _ => false,
+        }
+    } else {
+        false
     }
 }
