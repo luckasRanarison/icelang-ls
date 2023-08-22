@@ -70,3 +70,6 @@ impl From<&Node<'_>> for NodeType {
         }
     }
 }
+
+pub const LOOP_NODE: [NodeType; 3] = [NodeType::StmtFor, NodeType::StmtWhile, NodeType::StmtLoop];
+pub const FUNCTION_NODE: [NodeType; 2] = [NodeType::StmtFuncDecl, NodeType::ExprLambda];

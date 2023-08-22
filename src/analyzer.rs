@@ -2,7 +2,7 @@ use tower_lsp::lsp_types::{Diagnostic, Position, Range};
 use tree_sitter::{Node, Tree};
 
 use crate::{
-    ast::NodeType,
+    ast::{NodeType, FUNCTION_NODE, LOOP_NODE},
     declarations::{Declaration, DeclarationKind, DeclarationMap},
     diagnostic::{error, hint, ErrorKind, HintKind},
     utils::*,
@@ -60,9 +60,9 @@ impl<'a> Analyzer<'a> {
             NodeType::StmtVarDecl => self.eval_var_decl(node),
             NodeType::StmtFuncDecl => self.eval_func_decl(node),
             NodeType::ExprIdentifier => self.eval_identifier(node),
-            NodeType::StmtContinue | NodeType::StmtBreak | NodeType::StmtReturn => {
-                self.eval_control_flow(node)
-            }
+            NodeType::StmtContinue => self.eval_continue(node),
+            NodeType::StmtBreak => self.eval_break(node),
+            NodeType::StmtReturn => self.eval_return(node),
             _ => {}
         }
 
@@ -81,9 +81,7 @@ impl<'a> Analyzer<'a> {
                 Some(child) => {
                     let child_range = get_node_range(&child);
                     match NodeType::from(&child) {
-                        NodeType::ExprIdentifier => {
-                            error(ErrorKind::SyntaxError, child_range)
-                        }
+                        NodeType::ExprIdentifier => error(ErrorKind::SyntaxError, child_range),
                         _ => error(ErrorKind::Unexpected, child_range),
                     }
                 }
@@ -182,27 +180,30 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn eval_control_flow(&mut self, node: &Node) {
-        let node_type = NodeType::from(node);
-        let parent_types = match node_type {
-            NodeType::StmtContinue | NodeType::StmtBreak => {
-                vec![NodeType::StmtFor, NodeType::StmtWhile, NodeType::StmtLoop]
-            }
-            NodeType::StmtReturn => vec![NodeType::StmtFuncDecl, NodeType::ExprLambda],
-            _ => unreachable!(),
-        };
-
-        if has_parent(node, parent_types) {
+    fn eval_continue(&mut self, node: &Node) {
+        if has_parent(node, &LOOP_NODE) {
             self.next_unreachable(node);
         } else {
-            let kind = match NodeType::from(node) {
-                NodeType::StmtContinue => ErrorKind::ContinueOutside,
-                NodeType::StmtBreak => ErrorKind::BreakOutside,
-                NodeType::StmtReturn => ErrorKind::ReturnOutside,
-                _ => unreachable!(),
-            };
+            self.diagnostics
+                .push(error(ErrorKind::ContinueOutside, get_node_range(node)));
+        }
+    }
 
-            self.diagnostics.push(error(kind, get_node_range(node)))
+    fn eval_break(&mut self, node: &Node) {
+        if has_parent(node, &LOOP_NODE) {
+            self.next_unreachable(node);
+        } else {
+            self.diagnostics
+                .push(error(ErrorKind::BreakOutside, get_node_range(node)));
+        }
+    }
+
+    fn eval_return(&mut self, node: &Node) {
+        if has_parent(node, &FUNCTION_NODE) {
+            self.next_unreachable(node);
+        } else {
+            self.diagnostics
+                .push(error(ErrorKind::ReturnOutside, get_node_range(node)));
         }
     }
 
@@ -260,10 +261,9 @@ fn skip_identifer(node: &Node) -> bool {
         let name_node = parent.child_by_field_name("name");
 
         return match NodeType::from(&parent) {
-            NodeType::StmtFuncDecl
-            | NodeType::Args
-            | NodeType::ExprField
-            | NodeType::Iterator => true,
+            NodeType::StmtFuncDecl | NodeType::Args | NodeType::ExprField | NodeType::Iterator => {
+                true
+            }
             NodeType::StmtVarDecl | NodeType::Prop => name_node == Some(*node),
             _ => false,
         };
@@ -272,7 +272,7 @@ fn skip_identifer(node: &Node) -> bool {
     }
 }
 
-fn has_parent(node: &Node, parent_types: Vec<NodeType>) -> bool {
+fn has_parent(node: &Node, parent_types: &[NodeType]) -> bool {
     let mut parent = node.parent();
 
     while let Some(value) = parent {
