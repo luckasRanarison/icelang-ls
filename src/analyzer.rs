@@ -1,10 +1,10 @@
-use tower_lsp::lsp_types::{Diagnostic, Range};
+use tower_lsp::lsp_types::{Diagnostic, Position, Range};
 use tree_sitter::{Node, Tree};
 
 use crate::{
     ast::NodeType,
     declarations::{Declaration, DeclarationKind, DeclarationMap},
-    diagnostic::{error, ErrorKind},
+    diagnostic::{error, hint, ErrorKind, HintKind},
     utils::*,
 };
 
@@ -60,6 +60,9 @@ impl<'a> Analyzer<'a> {
             NodeType::StmtVarDecl => self.eval_var_decl(node),
             NodeType::StmtFuncDecl => self.eval_func_decl(node),
             NodeType::ExprIdentifier => self.eval_identifier(node),
+            NodeType::StmtContinue | NodeType::StmtBreak | NodeType::StmtReturn => {
+                self.eval_control_flow(node)
+            }
             _ => {}
         }
 
@@ -78,7 +81,9 @@ impl<'a> Analyzer<'a> {
                 Some(child) => {
                     let child_range = get_node_range(&child);
                     match NodeType::from(&child) {
-                        NodeType::ExprIdentifier => error(ErrorKind::SyntaxError, child_range),
+                        NodeType::ExprIdentifier => {
+                            error(ErrorKind::SyntaxError, child_range)
+                        }
                         _ => error(ErrorKind::Unexpected, child_range),
                     }
                 }
@@ -177,6 +182,61 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn eval_control_flow(&mut self, node: &Node) {
+        let node_type = NodeType::from(node);
+        let parent_types = match node_type {
+            NodeType::StmtContinue | NodeType::StmtBreak => {
+                vec![NodeType::StmtFor, NodeType::StmtWhile, NodeType::StmtLoop]
+            }
+            NodeType::StmtReturn => vec![NodeType::StmtFuncDecl, NodeType::ExprLambda],
+            _ => unreachable!(),
+        };
+
+        if has_parent(node, parent_types) {
+            self.next_unreachable(node);
+        } else {
+            let kind = match NodeType::from(node) {
+                NodeType::StmtContinue => ErrorKind::ContinueOutside,
+                NodeType::StmtBreak => ErrorKind::BreakOutside,
+                NodeType::StmtReturn => ErrorKind::ReturnOutside,
+                _ => unreachable!(),
+            };
+
+            self.diagnostics.push(error(kind, get_node_range(node)))
+        }
+    }
+
+    fn next_unreachable(&mut self, node: &Node) {
+        let mut start: Option<Position> = None;
+        let mut end: Option<Position> = None;
+        let mut sibling = node.next_named_sibling();
+
+        while let Some(value) = sibling {
+            if start.is_none() {
+                let node_start = point_to_position(value.start_position());
+
+                start = Some(node_start);
+            }
+
+            let node_end = point_to_position(value.end_position());
+
+            if let Some(value) = end {
+                if node_end > value {
+                    end = Some(node_end)
+                }
+            } else {
+                end = Some(node_end);
+            }
+
+            sibling = value.next_named_sibling();
+        }
+
+        if let (Some(start), Some(end)) = (start, end) {
+            self.diagnostics
+                .push(hint(HintKind::Unreachable, Range::new(start, end)));
+        }
+    }
+
     fn resolve_identifiers(&mut self) {
         for (name, range) in &self.identifiers {
             if name == "" {
@@ -199,15 +259,31 @@ fn skip_identifer(node: &Node) -> bool {
     if let Some(parent) = node.parent() {
         let name_node = parent.child_by_field_name("name");
 
-        match NodeType::from(&parent) {
+        return match NodeType::from(&parent) {
             NodeType::StmtFuncDecl
             | NodeType::Args
             | NodeType::ExprField
             | NodeType::Iterator => true,
             NodeType::StmtVarDecl | NodeType::Prop => name_node == Some(*node),
             _ => false,
-        }
+        };
     } else {
         false
     }
+}
+
+fn has_parent(node: &Node, parent_types: Vec<NodeType>) -> bool {
+    let mut parent = node.parent();
+
+    while let Some(value) = parent {
+        let parent_type = NodeType::from(&value);
+
+        if parent_types.contains(&parent_type) {
+            return true;
+        }
+
+        parent = value.parent();
+    }
+
+    false
 }
