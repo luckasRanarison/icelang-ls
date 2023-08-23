@@ -95,7 +95,16 @@ impl<'a> Analyzer<'a> {
         if node.is_missing() {
             let range = get_node_range(&node);
             let error = match NodeType::from(node) {
-                NodeType::ExprIdentifier => error(ErrorKind::ExpectedExpr, range),
+                NodeType::ExprIdentifier => {
+                    let parent = node.parent();
+                    let text = parent.as_ref().map(|p| p.utf8_text(&self.source).unwrap());
+                    let kind = match text {
+                        Some(".") => ErrorKind::ExpectedField,
+                        _ => ErrorKind::ExpectedExpr,
+                    };
+
+                    error(kind, range)
+                }
                 _ => error(ErrorKind::Missing(node.kind().to_owned()), range),
             };
 
@@ -181,10 +190,10 @@ impl<'a> Analyzer<'a> {
     }
 
     fn eval_identifier(&mut self, node: &Node) {
-        let name = node.utf8_text(&self.source).unwrap();
-        let range = get_node_range(&node);
-
         if !skip_identifer(node) {
+            let name = node.utf8_text(&self.source).unwrap();
+            let range = get_node_range(&node);
+
             self.identifiers.push((name.to_owned(), range));
         }
     }
@@ -320,12 +329,6 @@ impl<'a> Analyzer<'a> {
 
     fn resolve_identifiers(&mut self) {
         for (name, range) in &self.identifiers {
-            if name == "" {
-                self.diagnostics
-                    .push(error(ErrorKind::ExpectedField, *range));
-                continue;
-            }
-
             let is_declared = self.declarations.is_declared_at(name, range.end);
 
             if !is_declared {
@@ -337,6 +340,10 @@ impl<'a> Analyzer<'a> {
 }
 
 fn skip_identifer(node: &Node) -> bool {
+    if node.start_position() == node.end_position() {
+        return true;
+    }
+
     if let Some(parent) = node.parent() {
         return match NodeType::from(&parent) {
             NodeType::StmtFuncDecl | NodeType::ExprField | NodeType::Iterator => true,
