@@ -60,6 +60,7 @@ impl<'a> Analyzer<'a> {
             NodeType::StmtVarDecl => self.eval_var_decl(node),
             NodeType::StmtFuncDecl => self.eval_func_decl(node),
             NodeType::ExprIdentifier => self.eval_identifier(node),
+            NodeType::StmtFor => self.eval_for_loop(node),
             NodeType::StmtContinue => self.eval_continue(node),
             NodeType::StmtBreak => self.eval_break(node),
             NodeType::StmtReturn => self.eval_return(node),
@@ -212,6 +213,22 @@ impl<'a> Analyzer<'a> {
         } else {
             self.diagnostics
                 .push(error(ErrorKind::ReturnOutside, get_node_range(node)));
+        }
+    }
+
+    fn eval_for_loop(&mut self, node: &Node) {
+        let iterator = node.child_by_field_name("iterator").unwrap();
+        let body = node.child_by_field_name("body").unwrap();
+        let mut cursor = Node::walk(&iterator);
+
+        for child in iterator.children(&mut cursor) {
+            let name = child.utf8_text(&self.source).unwrap();
+            let kind = DeclarationKind::Variable(VariableType::Any);
+            let range = get_node_range(&iterator);
+            let scope = Some(get_node_range(&body));
+            let declaration = Declaration::new(name.to_owned(), kind, range, scope);
+
+            self.declarations.insert(declaration);
         }
     }
 
