@@ -2,7 +2,6 @@ use std::{collections::HashMap, vec};
 
 use tower_lsp::lsp_types::{Position, Range};
 
-// TODO: type check
 #[derive(Debug, Clone)]
 pub enum VariableType {
     Any,
@@ -76,13 +75,11 @@ impl DeclarationMap {
         let name = value.name.clone();
 
         if let Some(declarations) = self.map.get_mut(&name) {
-            let contains = declarations.contains(&value);
-
-            if contains {
+            if declarations.contains(&value) {
                 return false;
-            } else {
-                declarations.push(value)
             }
+
+            declarations.push(value)
         } else {
             self.map.insert(name.to_owned(), vec![value]);
         }

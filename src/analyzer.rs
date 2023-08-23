@@ -275,12 +275,10 @@ impl<'a> Analyzer<'a> {
 
         for arg in args.named_children(&mut cursor) {
             let name = arg.utf8_text(&self.source).unwrap();
-            let declaration = Declaration {
-                name: name.to_string(),
-                kind: DeclarationKind::Variable(VariableType::Any),
-                range: get_node_range(&args),
-                scope: Some(get_node_range(&body)),
-            };
+            let kind = DeclarationKind::Variable(VariableType::Any);
+            let range = get_node_range(&args);
+            let scope = Some(get_node_range(&body));
+            let declaration = Declaration::new(name.to_string(), kind, range, scope);
 
             names.push(name.to_owned());
             declarations.push(declaration)
