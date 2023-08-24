@@ -9,7 +9,7 @@ ropey = "1.6.0"
 tokio = { version = "1.32.0", features = ["full"] }
 tower-lsp = { version = "0.20.0", features = ["proposed"] }
 tree-sitter = "0.20.10"
-tree-sitter-icelang = "0.1.4"
+tree-sitter-icelang = "0.1.5"
 
 [build-dependencies]
 cc = "*"
