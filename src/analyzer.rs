@@ -4,7 +4,7 @@ use tree_sitter::{Node, Tree};
 use crate::{
     ast::{NodeType, FUNCTION_NODE, LOOP_NODE},
     declarations::{Declaration, DeclarationKind, DeclarationMap, VariableType},
-    diagnostic::{error, hint, ErrorKind, HintKind},
+    diagnostic::{error, hint, warn, ErrorKind, HintKind, WarnKind},
     utils::*,
 };
 
@@ -22,7 +22,13 @@ struct Analyzer<'a> {
     tree: &'a Tree,
     diagnostics: Vec<Diagnostic>,
     declarations: DeclarationMap,
-    identifiers: Vec<(String, Range)>,
+    identifiers: Vec<IdentiferData>,
+}
+
+pub struct IdentiferData {
+    pub name: String,
+    pub range: Range,
+    pub used: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -46,6 +52,7 @@ impl<'a> Analyzer<'a> {
         }
 
         self.resolve_identifiers();
+        self.report_unused();
 
         AnalyzeResult {
             diagnostics: self.diagnostics.clone(),
@@ -57,13 +64,15 @@ impl<'a> Analyzer<'a> {
         self.handle_syntax_error(node);
 
         match NodeType::from(node) {
+            NodeType::StmtExpression => self.eval_expression(node),
             NodeType::StmtVarDecl => self.eval_var_decl(node),
             NodeType::StmtFuncDecl => self.eval_func_decl(node),
-            NodeType::ExprIdentifier => self.eval_identifier(node),
             NodeType::StmtFor => self.eval_for_loop(node),
             NodeType::StmtContinue => self.eval_continue(node),
             NodeType::StmtBreak => self.eval_break(node),
             NodeType::StmtReturn => self.eval_return(node),
+            NodeType::ExprMatch => self.eval_match(node),
+            NodeType::ExprIdentifier => self.eval_identifier(node),
             _ => {}
         }
 
@@ -112,9 +121,35 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn eval_expression(&mut self, node: &Node) {
+        let child = node.named_child(0);
+
+        if let Some(child) = child {
+            let node_type = NodeType::from(&child);
+            let unused = match node_type {
+                NodeType::ExprBinary => {
+                    let operator_node = child.child_by_field_name("operator").unwrap();
+                    let operator = operator_node.utf8_text(&self.source).unwrap();
+
+                    operator != "="
+                }
+                NodeType::ExprUnary | NodeType::ExprLiteral | NodeType::ExprIdentifier => true,
+                _ => false,
+            };
+
+            if unused {
+                self.diagnostics
+                    .push(warn(WarnKind::UnusedResult, get_node_range(&node)));
+                self.diagnostics
+                    .push(hint(HintKind::Assign, get_node_range(&node)));
+            }
+        }
+    }
+
     fn eval_var_decl(&mut self, node: &Node) {
         let name_node = node.child_by_field_name("name").unwrap();
         let name = name_node.utf8_text(&self.source).unwrap();
+        let name_range = get_node_range(&name_node);
         let value_node = node.child_by_field_name("value").unwrap();
         let mut scope = None;
 
@@ -129,7 +164,6 @@ impl<'a> Analyzer<'a> {
                 let body = value_node.child_by_field_name("body").unwrap();
                 let (names, args_decl) = self.get_function_args(&value_node);
                 let kind = DeclarationKind::Function(names);
-
                 let range = Range::new(
                     point_to_position(node.start_position()),
                     point_to_position(body.start_position()),
@@ -139,13 +173,13 @@ impl<'a> Analyzer<'a> {
                     self.declarations.insert(decl);
                 }
 
-                Declaration::new(name.to_owned(), kind, range, scope)
+                Declaration::new(name.to_owned(), kind, range, name_range, scope)
             }
             _ => {
                 let kind = DeclarationKind::Variable(self.get_var_type(&value_node));
                 let range = tsrange_to_lsprange(node.range());
 
-                Declaration::new(name.to_owned(), kind, range, scope)
+                Declaration::new(name.to_owned(), kind, range, name_range, scope)
             }
         };
 
@@ -164,7 +198,7 @@ impl<'a> Analyzer<'a> {
         let (names, args_decl) = self.get_function_args(&node);
         let name = name_node.utf8_text(&self.source).unwrap();
         let kind = DeclarationKind::Function(names);
-
+        let name_range = get_node_range(&name_node);
         let range = Range::new(
             point_to_position(node.start_position()),
             point_to_position(block.start_position()),
@@ -179,7 +213,7 @@ impl<'a> Analyzer<'a> {
             self.declarations.insert(decl);
         }
 
-        let declaration = Declaration::new(name.to_owned(), kind, range, scope);
+        let declaration = Declaration::new(name.to_owned(), kind, range, name_range, scope);
 
         if !self.declarations.insert(declaration) {
             self.diagnostics.push(error(
@@ -191,10 +225,12 @@ impl<'a> Analyzer<'a> {
 
     fn eval_identifier(&mut self, node: &Node) {
         if !skip_identifer(node) {
-            let name = node.utf8_text(&self.source).unwrap();
-            let range = get_node_range(&node);
+            let name = node.utf8_text(&self.source).unwrap().to_owned();
+            let range = get_node_range(node);
+            let used = true;
+            let data = IdentiferData { name, range, used };
 
-            self.identifiers.push((name.to_owned(), range));
+            self.identifiers.push(data);
         }
     }
 
@@ -230,14 +266,24 @@ impl<'a> Analyzer<'a> {
         let body = node.child_by_field_name("body").unwrap();
         let mut cursor = Node::walk(&iterator);
 
-        for child in iterator.children(&mut cursor) {
+        for child in iterator.named_children(&mut cursor) {
             let name = child.utf8_text(&self.source).unwrap();
             let kind = DeclarationKind::Variable(VariableType::Any);
             let range = get_node_range(&iterator);
+            let name_range = get_node_range(&child);
             let scope = Some(get_node_range(&body));
-            let declaration = Declaration::new(name.to_owned(), kind, range, scope);
+            let declaration = Declaration::new(name.to_owned(), kind, range, name_range, scope);
 
             self.declarations.insert(declaration);
+        }
+    }
+
+    fn eval_match(&mut self, node: &Node) {
+        let body = node.child_by_field_name("body").unwrap();
+
+        if body.named_child_count() == 0 {
+            self.diagnostics
+                .push(hint(HintKind::EmptyMatch, get_node_range(&node)));
         }
     }
 
@@ -284,10 +330,11 @@ impl<'a> Analyzer<'a> {
 
         for arg in args.named_children(&mut cursor) {
             let name = arg.utf8_text(&self.source).unwrap();
+            let name_range = get_node_range(&arg);
             let kind = DeclarationKind::Variable(VariableType::Any);
             let range = get_node_range(&args);
             let scope = Some(get_node_range(&body));
-            let declaration = Declaration::new(name.to_string(), kind, range, scope);
+            let declaration = Declaration::new(name.to_string(), kind, range, name_range, scope);
 
             names.push(name.to_owned());
             declarations.push(declaration)
@@ -328,12 +375,23 @@ impl<'a> Analyzer<'a> {
     }
 
     fn resolve_identifiers(&mut self) {
-        for (name, range) in &self.identifiers {
-            let is_declared = self.declarations.is_declared_at(name, range.end);
+        for ident in &self.identifiers {
+            let is_declared = self.declarations.is_declared_at(&ident);
 
             if !is_declared {
+                self.diagnostics.push(error(
+                    ErrorKind::Undeclared(ident.name.to_owned()),
+                    ident.range,
+                ));
+            }
+        }
+    }
+
+    fn report_unused(&mut self) {
+        for unused in self.declarations.get_unused() {
+            if unused.name != "_" {
                 self.diagnostics
-                    .push(error(ErrorKind::Undeclared(name.to_owned()), *range));
+                    .push(hint(HintKind::Unused(unused.name), unused.name_range))
             }
         }
     }

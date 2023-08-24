@@ -43,21 +43,53 @@ pub fn error(kind: ErrorKind, range: Range) -> Diagnostic {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum WarnKind {
+    UnusedResult,
+}
+
+impl ToString for WarnKind {
+    fn to_string(&self) -> String {
+        match self {
+            WarnKind::UnusedResult => "Unused result".to_owned(),
+        }
+    }
+}
+
+pub fn warn(kind: WarnKind, range: Range) -> Diagnostic {
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::WARNING),
+        source: Some("icelang_ls".to_owned()),
+        message: kind.to_string(),
+        ..Default::default()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum HintKind {
     Unreachable,
+    EmptyMatch,
+    Unused(String),
+    Assign,
 }
 
 impl ToString for HintKind {
     fn to_string(&self) -> String {
         match self {
             HintKind::Unreachable => "Unreachable code".to_string(),
+            HintKind::EmptyMatch => "Empty match expression".to_string(),
+            HintKind::Unused(str) => format!("'{}' is never used", str),
+            HintKind::Assign => "Consider assigning the resulting value".to_owned(),
         }
     }
 }
 
 pub fn hint(kind: HintKind, range: Range) -> Diagnostic {
     let tags = match kind {
-        HintKind::Unreachable => vec![DiagnosticTag::UNNECESSARY],
+        HintKind::Unreachable | HintKind::EmptyMatch | HintKind::Unused(_) | HintKind::Assign => {
+            vec![DiagnosticTag::UNNECESSARY]
+        }
     };
 
     Diagnostic {

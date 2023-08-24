@@ -2,6 +2,8 @@ use std::{collections::HashMap, vec};
 
 use tower_lsp::lsp_types::{Position, Range};
 
+use crate::analyzer::IdentiferData;
+
 #[derive(Debug, Clone)]
 pub enum VariableType {
     Any,
@@ -32,9 +34,11 @@ impl DeclarationKind {
 #[derive(Debug, Clone)]
 pub struct Declaration {
     pub name: String,
+    pub name_range: Range,
     pub kind: DeclarationKind,
-    pub range: Range,
-    pub scope: Option<Range>,
+    range: Range,
+    scope: Option<Range>,
+    used: bool,
 }
 
 impl PartialEq for Declaration {
@@ -48,13 +52,16 @@ impl Declaration {
         name: String,
         kind: DeclarationKind,
         range: Range,
+        name_range: Range,
         scope: Option<Range>,
     ) -> Declaration {
         Self {
             name,
             kind,
             range,
+            name_range,
             scope,
+            used: false,
         }
     }
 }
@@ -87,10 +94,14 @@ impl DeclarationMap {
         true
     }
 
-    pub fn is_declared_at(&mut self, name: &str, position: Position) -> bool {
-        if let Some(declarations) = self.map.get(name) {
+    pub fn is_declared_at(&mut self, identifer: &IdentiferData) -> bool {
+        if let Some(declarations) = self.map.get_mut(&identifer.name) {
             for decl in declarations {
-                if is_declaration_at(decl, position) {
+                if is_declaration_at(decl, identifer.range.end) {
+                    if identifer.used {
+                        decl.used = true;
+                    }
+
                     return true;
                 }
             }
@@ -111,6 +122,20 @@ impl DeclarationMap {
         }
 
         result
+    }
+
+    pub fn get_unused(&self) -> Vec<Declaration> {
+        let mut unused = Vec::new();
+
+        for declarations in self.map.values() {
+            for decl in declarations {
+                if !decl.used {
+                    unused.push(decl.clone());
+                }
+            }
+        }
+
+        unused
     }
 
     fn get_nearest(
