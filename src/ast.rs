@@ -47,7 +47,7 @@ impl From<&Node<'_>> for NodeType {
             "stmt_continue" => NodeType::StmtContinue,
             "stmt_break" => NodeType::StmtBreak,
             "stmt_return" => NodeType::StmtReturn,
-            "stmt_expression" => NodeType::StmtReturn,
+            "stmt_expression" => NodeType::StmtExpression,
 
             "expr_literal" => NodeType::ExprLiteral,
             "expr_group" => NodeType::ExprGroup,
