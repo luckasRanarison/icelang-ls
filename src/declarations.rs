@@ -1,8 +1,11 @@
 use std::{collections::HashMap, vec};
 
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp::lsp_types::{Documentation, MarkupContent, MarkupKind, Position, Range};
 
-use crate::analyzer::IdentiferData;
+use crate::{
+    analyzer::IdentiferData,
+    builtins::{BuiltinFn, BUILTIN_FUNCTION},
+};
 
 #[derive(Debug, Clone)]
 pub enum VariableType {
@@ -11,15 +14,45 @@ pub enum VariableType {
     Boolean,
     Number,
     String,
+    Range,
     Array,
     Object(Vec<String>),
     Function(Vec<String>),
+}
+
+impl ToString for VariableType {
+    fn to_string(&self) -> String {
+        match self {
+            VariableType::Any => "any".to_owned(),
+            VariableType::Null => "null".to_owned(),
+            VariableType::Boolean => "boolean".to_owned(),
+            VariableType::Number => "number".to_owned(),
+            VariableType::String => "string".to_owned(),
+            VariableType::Range => "range".to_owned(),
+            VariableType::Array => "array".to_owned(),
+            VariableType::Object(props) => format!("object {{ {} }}", props.join(", ")),
+            VariableType::Function(args) => format!("function ({})", args.join(", ")),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum DeclarationKind {
     Variable(VariableType),
     Function(Vec<String>),
+}
+
+impl Declaration {
+    pub fn get_details(&self) -> String {
+        match &self.kind {
+            DeclarationKind::Variable(value) => {
+                format!("set {} -- {}", &self.name, value.to_string())
+            }
+            DeclarationKind::Function(args) => {
+                format!("function {}({}) {{}}", &self.name, args.join(", "))
+            }
+        }
+    }
 }
 
 impl DeclarationKind {
@@ -36,6 +69,8 @@ pub struct Declaration {
     pub name: String,
     pub name_range: Range,
     pub kind: DeclarationKind,
+    pub doc: Option<Documentation>,
+    pub builtin: bool,
     range: Range,
     scope: Option<Range>,
     used: bool,
@@ -58,10 +93,32 @@ impl Declaration {
         Self {
             name,
             kind,
+            doc: None,
+            builtin: false,
             range,
             name_range,
             scope,
             used: false,
+        }
+    }
+}
+
+impl From<&BuiltinFn> for Declaration {
+    fn from(value: &BuiltinFn) -> Self {
+        let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+
+        Declaration {
+            name: value.name.clone(),
+            kind: DeclarationKind::Function(value.args.clone()),
+            doc: Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: value.doc.clone(),
+            })),
+            builtin: true,
+            range,
+            name_range: range,
+            scope: None,
+            used: true,
         }
     }
 }
@@ -73,9 +130,16 @@ pub struct DeclarationMap {
 
 impl DeclarationMap {
     pub fn new() -> Self {
-        Self {
-            map: HashMap::new(),
+        let mut map = HashMap::new();
+
+        for builtin_fn in BUILTIN_FUNCTION.iter() {
+            let name = builtin_fn.name.clone();
+            let declaration = Declaration::from(builtin_fn);
+
+            map.insert(name.to_owned(), vec![declaration]);
         }
+
+        Self { map }
     }
 
     pub fn insert(&mut self, value: Declaration) -> bool {

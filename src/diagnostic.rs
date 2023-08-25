@@ -7,6 +7,7 @@ pub enum ErrorKind {
     ExpectedExpr,
     ExpectedField,
     Missing(String),
+    UndelimitedStr,
     Redeclaration(String),
     Undeclared(String),
     ContinueOutside,
@@ -21,6 +22,7 @@ impl ToString for ErrorKind {
             ErrorKind::Unexpected => "Unexpected token".to_owned(),
             ErrorKind::ExpectedExpr => "Expected expression".to_owned(),
             ErrorKind::ExpectedField => "Expected field name".to_owned(),
+            ErrorKind::UndelimitedStr => "Undelimited string".to_owned(),
             ErrorKind::Missing(str) => format!("Missing '{}'", str),
             ErrorKind::Redeclaration(str) => {
                 format!("Redeclaring existing identifier '{}'", str)

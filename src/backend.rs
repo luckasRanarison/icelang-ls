@@ -2,7 +2,7 @@ use dashmap::DashMap;
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
 
 use crate::{
-    analyzer::analyze, completion::KEYWORDS, document::Document, declarations::DeclarationKind,
+    analyzer::analyze, builtins::KEYWORDS, document::Document, declarations::DeclarationKind,
 };
 
 pub struct Backend {
@@ -122,11 +122,15 @@ impl LanguageServer for Backend {
                     DeclarationKind::Variable(_) => CompletionItemKind::VARIABLE,
                     DeclarationKind::Function(_) => CompletionItemKind::FUNCTION,
                 };
+                // TODO: use state for variable types
+                let detail = Some(decl.get_details());
                 
                 completions.push(CompletionItem {
                     label: decl.name.clone(),
                     insert_text: Some(decl.name),
                     kind: Some(kind),
+                    detail,
+                    documentation: decl.doc,
                     ..Default::default()
                 });
             }

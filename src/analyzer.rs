@@ -73,6 +73,7 @@ impl<'a> Analyzer<'a> {
             NodeType::StmtReturn => self.eval_return(node),
             NodeType::ExprMatch => self.eval_match(node),
             NodeType::ExprIdentifier => self.eval_identifier(node),
+            NodeType::ExprLiteral => self.eval_literal(node),
             _ => {}
         }
 
@@ -146,6 +147,24 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn eval_literal(&mut self, node: &Node) {
+        let child = node.named_child(0);
+
+        if let Some(child) = child {
+            if child.kind() == "string" {
+                let start = point_to_position(child.start_position());
+                let end = point_to_position(child.end_position());
+
+                if start.line != end.line {
+                    self.diagnostics
+                        .push(error(ErrorKind::UndelimitedStr, Range::new(start, start)));
+                    self.diagnostics
+                        .push(error(ErrorKind::UndelimitedStr, Range::new(end, end)))
+                }
+            }
+        }
+    }
+
     fn eval_var_decl(&mut self, node: &Node) {
         let name_node = node.child_by_field_name("name").unwrap();
         let name = name_node.utf8_text(&self.source).unwrap();
@@ -163,7 +182,7 @@ impl<'a> Analyzer<'a> {
             NodeType::ExprLambda => {
                 let body = value_node.child_by_field_name("body").unwrap();
                 let (names, args_decl) = self.get_function_args(&value_node);
-                let kind = DeclarationKind::Function(names);
+                let kind = DeclarationKind::Variable(VariableType::Function(names));
                 let range = Range::new(
                     point_to_position(node.start_position()),
                     point_to_position(body.start_position()),
