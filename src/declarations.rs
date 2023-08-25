@@ -44,12 +44,24 @@ pub enum DeclarationKind {
 
 impl Declaration {
     pub fn get_details(&self) -> String {
-        match &self.kind {
-            DeclarationKind::Variable(value) => {
-                format!("set {} -- {}", &self.name, value.to_string())
-            }
-            DeclarationKind::Function(args) => {
-                format!("function {}({}) {{}}", &self.name, args.join(", "))
+        if self.param {
+            format!("parameter: {} -- any", &self.name)
+        } else {
+            match &self.kind {
+                DeclarationKind::Variable(value) => {
+                    format!("variable: {} -- {}", &self.name, value.to_string())
+                }
+                DeclarationKind::Function(args) => {
+                    format!(
+                        "function {}({}) {{}}{}",
+                        &self.name,
+                        args.join(", "),
+                        match self.builtin {
+                            true => " -- builtin function",
+                            _ => "",
+                        }
+                    )
+                }
             }
         }
     }
@@ -70,10 +82,11 @@ pub struct Declaration {
     pub name_range: Range,
     pub kind: DeclarationKind,
     pub doc: Option<Documentation>,
-    pub builtin: bool,
     range: Range,
     scope: Option<Range>,
     used: bool,
+    builtin: bool,
+    param: bool,
 }
 
 impl PartialEq for Declaration {
@@ -89,16 +102,18 @@ impl Declaration {
         range: Range,
         name_range: Range,
         scope: Option<Range>,
+        is_param: bool,
     ) -> Declaration {
         Self {
             name,
             kind,
             doc: None,
-            builtin: false,
             range,
             name_range,
             scope,
             used: false,
+            builtin: false,
+            param: is_param,
         }
     }
 }
@@ -114,11 +129,12 @@ impl From<&BuiltinFn> for Declaration {
                 kind: MarkupKind::Markdown,
                 value: value.doc.clone(),
             })),
-            builtin: true,
             range,
             name_range: range,
             scope: None,
             used: true,
+            builtin: true,
+            param: false,
         }
     }
 }

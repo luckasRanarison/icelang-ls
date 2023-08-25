@@ -192,13 +192,13 @@ impl<'a> Analyzer<'a> {
                     self.declarations.insert(decl);
                 }
 
-                Declaration::new(name.to_owned(), kind, range, name_range, scope)
+                Declaration::new(name.to_owned(), kind, range, name_range, scope, false)
             }
             _ => {
                 let kind = DeclarationKind::Variable(self.get_var_type(&value_node));
                 let range = tsrange_to_lsprange(node.range());
 
-                Declaration::new(name.to_owned(), kind, range, name_range, scope)
+                Declaration::new(name.to_owned(), kind, range, name_range, scope, false)
             }
         };
 
@@ -232,9 +232,9 @@ impl<'a> Analyzer<'a> {
             self.declarations.insert(decl);
         }
 
-        let declaration = Declaration::new(name.to_owned(), kind, range, name_range, scope);
+        let decl = Declaration::new(name.to_owned(), kind, range, name_range, scope, false);
 
-        if !self.declarations.insert(declaration) {
+        if !self.declarations.insert(decl) {
             self.diagnostics.push(error(
                 ErrorKind::Redeclaration(name.to_owned()),
                 get_node_range(&name_node),
@@ -291,9 +291,9 @@ impl<'a> Analyzer<'a> {
             let range = get_node_range(&iterator);
             let name_range = get_node_range(&child);
             let scope = Some(get_node_range(&body));
-            let declaration = Declaration::new(name.to_owned(), kind, range, name_range, scope);
+            let decl = Declaration::new(name.to_owned(), kind, range, name_range, scope, false);
 
-            self.declarations.insert(declaration);
+            self.declarations.insert(decl);
         }
     }
 
@@ -353,10 +353,10 @@ impl<'a> Analyzer<'a> {
             let kind = DeclarationKind::Variable(VariableType::Any);
             let range = get_node_range(&args);
             let scope = Some(get_node_range(&body));
-            let declaration = Declaration::new(name.to_string(), kind, range, name_range, scope);
+            let decl = Declaration::new(name.to_string(), kind, range, name_range, scope, true);
 
             names.push(name.to_owned());
-            declarations.push(declaration)
+            declarations.push(decl)
         }
 
         (names, declarations)
