@@ -1,0 +1,48 @@
+{
+  "name": "icelang",
+  "displayName": "icelang",
+  "description": "icelang language support",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.81.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:icelang"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "icelang",
+        "extensions": [
+          ".ic"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "icelang",
+        "scopeName": "source.icelang",
+        "path": "./syntaxes/icelang.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint"
+  },
+  "devDependencies": {
+    "@types/node": "16.x",
+    "@types/vscode": "^1.81.0",
+    "typescript": "^5.1.6"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  }
+}
