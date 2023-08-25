@@ -13,6 +13,7 @@ pub enum ErrorKind {
     ContinueOutside,
     BreakOutside,
     ReturnOutside,
+    InvalidName,
 }
 
 impl ToString for ErrorKind {
@@ -31,6 +32,7 @@ impl ToString for ErrorKind {
             ErrorKind::ContinueOutside => "continue outside of a loop".to_owned(),
             ErrorKind::BreakOutside => "break outside of a loop".to_owned(),
             ErrorKind::ReturnOutside => "return outside of a function".to_owned(),
+            ErrorKind::InvalidName => "Invalid identifier name".to_owned(),
         }
     }
 }

@@ -3,6 +3,7 @@ use tree_sitter::{Node, Tree};
 
 use crate::{
     ast::{NodeType, FUNCTION_NODE, LOOP_NODE},
+    builtins::KEYWORDS,
     declarations::{Declaration, DeclarationKind, DeclarationMap, VariableType},
     diagnostic::{error, hint, warn, ErrorKind, HintKind, WarnKind},
     utils::*,
@@ -169,6 +170,12 @@ impl<'a> Analyzer<'a> {
         let name_node = node.child_by_field_name("name").unwrap();
         let name = name_node.utf8_text(&self.source).unwrap();
         let name_range = get_node_range(&name_node);
+
+        if KEYWORDS.contains(&name) {
+            self.diagnostics
+                .push(error(ErrorKind::InvalidName, name_range));
+        }
+
         let value_node = node.child_by_field_name("value").unwrap();
         let mut scope = None;
 
@@ -212,17 +219,21 @@ impl<'a> Analyzer<'a> {
 
     fn eval_func_decl(&mut self, node: &Node) {
         let name_node = node.child_by_field_name("name").unwrap();
-        let block = node.child_by_field_name("body").unwrap();
-
-        let (names, args_decl) = self.get_function_args(&node);
         let name = name_node.utf8_text(&self.source).unwrap();
-        let kind = DeclarationKind::Function(names);
         let name_range = get_node_range(&name_node);
+
+        if KEYWORDS.contains(&name) {
+            self.diagnostics
+                .push(error(ErrorKind::InvalidName, name_range));
+        }
+
+        let block = node.child_by_field_name("body").unwrap();
+        let (names, args_decl) = self.get_function_args(&node);
+        let kind = DeclarationKind::Function(names);
         let range = Range::new(
             point_to_position(node.start_position()),
             point_to_position(block.start_position()),
         );
-
         let scope = node
             .parent()
             .filter(|parent| NodeType::from(parent) == NodeType::StmtBlock)
@@ -348,6 +359,10 @@ impl<'a> Analyzer<'a> {
         let mut cursor = Node::walk(&args);
 
         for arg in args.named_children(&mut cursor) {
+            if arg.is_error() {
+                continue;
+            }
+
             let name = arg.utf8_text(&self.source).unwrap();
             let name_range = get_node_range(&arg);
             let kind = DeclarationKind::Variable(VariableType::Any);
