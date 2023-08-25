@@ -5,6 +5,7 @@ use tower_lsp::lsp_types::{Documentation, MarkupContent, MarkupKind, Position, R
 use crate::{
     analyzer::IdentiferData,
     builtins::{BuiltinFn, BUILTIN_FUNCTION},
+    utils::NIL_RANGE,
 };
 
 #[derive(Debug, Clone)]
@@ -120,8 +121,6 @@ impl Declaration {
 
 impl From<&BuiltinFn> for Declaration {
     fn from(value: &BuiltinFn) -> Self {
-        let range = Range::new(Position::new(0, 0), Position::new(0, 0));
-
         Declaration {
             name: value.name.clone(),
             kind: DeclarationKind::Function(value.args.clone()),
@@ -129,8 +128,8 @@ impl From<&BuiltinFn> for Declaration {
                 kind: MarkupKind::Markdown,
                 value: value.doc.clone(),
             })),
-            range,
-            name_range: range,
+            range: *NIL_RANGE,
+            name_range: *NIL_RANGE,
             scope: None,
             used: true,
             builtin: true,

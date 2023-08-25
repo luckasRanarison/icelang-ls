@@ -1,3 +1,4 @@
+use lazy_static::lazy_static;
 use tower_lsp::lsp_types::{Position, Range};
 use tree_sitter::{Node, Point};
 
@@ -16,4 +17,8 @@ pub fn tsrange_to_lsprange(range: tree_sitter::Range) -> Range {
     let start = point_to_position(range.start_point);
     let end = point_to_position(range.end_point);
     Range::new(start, end)
+}
+
+lazy_static! {
+    pub static ref NIL_RANGE: Range = Range::new(Position::new(0, 0), Position::new(0, 0));
 }

@@ -73,6 +73,7 @@ impl<'a> Analyzer<'a> {
             NodeType::StmtBreak => self.eval_break(node),
             NodeType::StmtReturn => self.eval_return(node),
             NodeType::ExprMatch => self.eval_match(node),
+            NodeType::ExprLambda => self.eval_lambda(node),
             NodeType::ExprIdentifier => self.eval_identifier(node),
             NodeType::ExprLiteral => self.eval_literal(node),
             _ => {}
@@ -128,6 +129,13 @@ impl<'a> Analyzer<'a> {
 
         if let Some(child) = child {
             let node_type = NodeType::from(&child);
+            let return_value = match node.parent() {
+                Some(parent) => {
+                    NodeType::from(&parent) == NodeType::StmtBlock
+                        && parent.named_child(parent.named_child_count() - 1) == Some(*node)
+                }
+                None => false,
+            };
             let unused = match node_type {
                 NodeType::ExprBinary => {
                     let operator_node = child.child_by_field_name("operator").unwrap();
@@ -139,7 +147,7 @@ impl<'a> Analyzer<'a> {
                 _ => false,
             };
 
-            if unused {
+            if !return_value && unused {
                 self.diagnostics
                     .push(warn(WarnKind::UnusedResult, get_node_range(&node)));
                 self.diagnostics
@@ -166,6 +174,14 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    fn eval_lambda(&mut self, node: &Node) {
+        let (_, args_decl) = self.get_function_args(node);
+
+        for decl in args_decl {
+            self.declarations.insert(decl);
+        }
+    }
+
     fn eval_var_decl(&mut self, node: &Node) {
         let name_node = node.child_by_field_name("name").unwrap();
         let name = name_node.utf8_text(&self.source).unwrap();
@@ -188,16 +204,12 @@ impl<'a> Analyzer<'a> {
         let declaration = match NodeType::from(&value_node) {
             NodeType::ExprLambda => {
                 let body = value_node.child_by_field_name("body").unwrap();
-                let (names, args_decl) = self.get_function_args(&value_node);
+                let (names, _) = self.get_function_args(&value_node);
                 let kind = DeclarationKind::Variable(VariableType::Function(names));
                 let range = Range::new(
                     point_to_position(node.start_position()),
                     point_to_position(body.start_position()),
                 );
-
-                for decl in args_decl {
-                    self.declarations.insert(decl);
-                }
 
                 Declaration::new(name.to_owned(), kind, range, name_range, scope, false)
             }
@@ -356,6 +368,7 @@ impl<'a> Analyzer<'a> {
         let mut declarations = Vec::new();
         let body = node.child_by_field_name("body").unwrap();
         let args = node.child_by_field_name("args").unwrap();
+        let range = get_node_range(&args);
         let mut cursor = Node::walk(&args);
 
         for arg in args.named_children(&mut cursor) {
@@ -366,13 +379,17 @@ impl<'a> Analyzer<'a> {
             let name = arg.utf8_text(&self.source).unwrap();
             let name_range = get_node_range(&arg);
             let kind = DeclarationKind::Variable(VariableType::Any);
-            let range = get_node_range(&args);
             let scope = Some(get_node_range(&body));
             let decl = Declaration::new(name.to_string(), kind, range, name_range, scope, true);
 
             names.push(name.to_owned());
             declarations.push(decl)
         }
+
+        let kind = DeclarationKind::Variable(VariableType::Any);
+        let scope = Some(get_node_range(&body));
+        let decl = Declaration::new("self".to_owned(), kind, *NIL_RANGE, *NIL_RANGE, scope, true);
+        declarations.push(decl);
 
         (names, declarations)
     }
@@ -423,7 +440,7 @@ impl<'a> Analyzer<'a> {
 
     fn report_unused(&mut self) {
         for unused in self.declarations.get_unused() {
-            if unused.name != "_" {
+            if unused.name != "_" && unused.name != "self" {
                 self.diagnostics
                     .push(hint(HintKind::Unused(unused.name), unused.name_range))
             }
@@ -438,7 +455,7 @@ fn skip_identifer(node: &Node) -> bool {
 
     if let Some(parent) = node.parent() {
         return match NodeType::from(&parent) {
-            NodeType::StmtFuncDecl | NodeType::ExprField | NodeType::Iterator => true,
+            NodeType::StmtFuncDecl | NodeType::Iterator => true,
             NodeType::StmtVarDecl | NodeType::Prop => {
                 parent.child_by_field_name("name") == Some(*node)
             }
@@ -446,6 +463,7 @@ fn skip_identifer(node: &Node) -> bool {
                 Some(value) => NodeType::from(&value) != NodeType::ExprCall,
                 None => false,
             },
+            NodeType::ExprField => parent.child_by_field_name("field") == Some(*node),
             _ => false,
         };
     }
