@@ -3,54 +3,25 @@ use std::{collections::HashMap, vec};
 use tower_lsp::lsp_types::{Documentation, MarkupContent, MarkupKind, Position, Range};
 
 use crate::{
-    analyzer::IdentiferData,
+    analyzer::Identifier,
     builtins::{BuiltinFn, BUILTIN_FUNCTION},
     utils::NIL_RANGE,
 };
 
 #[derive(Debug, Clone)]
-pub enum VariableType {
-    Any,
-    Null,
-    Boolean,
-    Number,
-    String,
-    Range,
-    Array,
-    Object(Vec<String>),
-    Function(Vec<String>),
-}
-
-impl ToString for VariableType {
-    fn to_string(&self) -> String {
-        match self {
-            VariableType::Any => "any".to_owned(),
-            VariableType::Null => "null".to_owned(),
-            VariableType::Boolean => "boolean".to_owned(),
-            VariableType::Number => "number".to_owned(),
-            VariableType::String => "string".to_owned(),
-            VariableType::Range => "range".to_owned(),
-            VariableType::Array => "array".to_owned(),
-            VariableType::Object(props) => format!("object {{ {} }}", props.join(", ")),
-            VariableType::Function(args) => format!("function ({})", args.join(", ")),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum DeclarationKind {
-    Variable(VariableType),
+    Variable,
     Function(Vec<String>),
 }
 
 impl Declaration {
     pub fn get_details(&self) -> String {
         if self.param {
-            format!("parameter: {} -- any", &self.name)
+            format!("parameter: {}", &self.name)
         } else {
             match &self.kind {
-                DeclarationKind::Variable(value) => {
-                    format!("variable: {} -- {}", &self.name, value.to_string())
+                DeclarationKind::Variable => {
+                    format!("variable: {}", &self.name)
                 }
                 DeclarationKind::Function(args) => {
                     format!(
@@ -83,9 +54,9 @@ pub struct Declaration {
     pub name_range: Range,
     pub kind: DeclarationKind,
     pub doc: Option<Documentation>,
+    pub used: bool,
     range: Range,
     scope: Option<Range>,
-    used: bool,
     builtin: bool,
     param: bool,
 }
@@ -173,20 +144,28 @@ impl DeclarationMap {
         true
     }
 
-    pub fn is_declared_at(&mut self, identifer: &IdentiferData) -> bool {
-        if let Some(declarations) = self.map.get_mut(&identifer.name) {
+    pub fn get(&mut self, identifer: &Identifier) -> Option<&Declaration> {
+        if let Some(declarations) = self.map.get(&identifer.name) {
             for decl in declarations {
                 if is_declaration_at(decl, identifer.range.end) {
-                    if identifer.used {
-                        decl.used = true;
-                    }
-
-                    return true;
+                    return Some(decl);
                 }
             }
         }
 
-        false
+        None
+    }
+
+    pub fn get_mut(&mut self, identifer: &Identifier) -> Option<&mut Declaration> {
+        if let Some(declarations) = self.map.get_mut(&identifer.name) {
+            for decl in declarations {
+                if is_declaration_at(decl, identifer.range.end) {
+                    return Some(decl);
+                }
+            }
+        }
+
+        None
     }
 
     pub fn get_declared_at(&self, position: Position) -> Vec<Declaration> {

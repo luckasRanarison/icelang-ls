@@ -2,7 +2,7 @@ use dashmap::DashMap;
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
 
 use crate::{
-    analyzer::analyze, builtins::KEYWORDS, document::Document, declarations::DeclarationKind,
+    analyzer::analyze, builtins::KEYWORDS, declarations::DeclarationKind, document::Document,
 };
 
 pub struct Backend {
@@ -57,7 +57,7 @@ impl LanguageServer for Backend {
 
             let content = &document.content.as_bytes();
             let tree = &document.tree;
-            let result= analyze(content, tree);
+            let result = analyze(content, tree);
 
             document.declarations = result.declarations;
 
@@ -81,7 +81,7 @@ impl LanguageServer for Backend {
 
             let content = &document.content.as_bytes();
             let tree = &document.tree;
-            let result= analyze(content, tree);
+            let result = analyze(content, tree);
 
             document.declarations = result.declarations;
 
@@ -102,6 +102,7 @@ impl LanguageServer for Backend {
             .await;
     }
 
+    // TODO: handle variables state & field completion
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let mut completions = vec![];
         let uri = params.text_document_position.text_document.uri;
@@ -115,16 +116,16 @@ impl LanguageServer for Backend {
                 ..Default::default()
             });
         }
-
+        
+        // FIXME: use symbol table
         if let Some(document) = self.document_map.get(&uri.to_string()) {
             for decl in document.declarations.get_declared_at(position) {
                 let kind = match decl.kind {
-                    DeclarationKind::Variable(_) => CompletionItemKind::VARIABLE,
+                    DeclarationKind::Variable => CompletionItemKind::VARIABLE,
                     DeclarationKind::Function(_) => CompletionItemKind::FUNCTION,
                 };
-                // TODO: use state for variable types
                 let detail = Some(decl.get_details());
-                
+
                 completions.push(CompletionItem {
                     label: decl.name.clone(),
                     insert_text: Some(decl.name),
@@ -139,8 +140,19 @@ impl LanguageServer for Backend {
         Ok(Some(completions).map(CompletionResponse::Array))
     }
 
+    async fn goto_definition(&self, _: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
+        todo!()
+    }
+
+    async fn references(&self, _: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        todo!()
+    }
+
     async fn hover(&self, _: HoverParams) -> Result<Option<Hover>> {
-        // TODO: add support for hover
-        Ok(None)
+        todo!()
+    }
+
+    async fn rename(&self, _: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        todo!()
     }
 }

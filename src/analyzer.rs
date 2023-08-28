@@ -4,7 +4,7 @@ use tree_sitter::{Node, Tree};
 use crate::{
     ast::{NodeType, FUNCTION_NODE, LOOP_NODE},
     builtins::KEYWORDS,
-    declarations::{Declaration, DeclarationKind, DeclarationMap, VariableType},
+    declarations::{Declaration, DeclarationKind, DeclarationMap},
     diagnostic::{error, hint, warn, ErrorKind, HintKind, WarnKind},
     utils::*,
 };
@@ -23,13 +23,12 @@ struct Analyzer<'a> {
     tree: &'a Tree,
     diagnostics: Vec<Diagnostic>,
     declarations: DeclarationMap,
-    identifiers: Vec<IdentiferData>,
+    identifiers: Vec<Identifier>, // FIXME: use symbol table
 }
 
-pub struct IdentiferData {
+pub struct Identifier {
     pub name: String,
     pub range: Range,
-    pub used: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -186,6 +185,7 @@ impl<'a> Analyzer<'a> {
         let name_node = node.child_by_field_name("name").unwrap();
         let name = name_node.utf8_text(&self.source).unwrap();
         let name_range = get_node_range(&name_node);
+        let kind = DeclarationKind::Variable;
 
         if KEYWORDS.contains(&name) {
             self.diagnostics
@@ -204,8 +204,6 @@ impl<'a> Analyzer<'a> {
         let declaration = match NodeType::from(&value_node) {
             NodeType::ExprLambda => {
                 let body = value_node.child_by_field_name("body").unwrap();
-                let (names, _) = self.get_function_args(&value_node);
-                let kind = DeclarationKind::Variable(VariableType::Function(names));
                 let range = Range::new(
                     point_to_position(node.start_position()),
                     point_to_position(body.start_position()),
@@ -214,7 +212,6 @@ impl<'a> Analyzer<'a> {
                 Declaration::new(name.to_owned(), kind, range, name_range, scope, false)
             }
             _ => {
-                let kind = DeclarationKind::Variable(self.get_var_type(&value_node));
                 let range = tsrange_to_lsprange(node.range());
 
                 Declaration::new(name.to_owned(), kind, range, name_range, scope, false)
@@ -269,8 +266,7 @@ impl<'a> Analyzer<'a> {
         if !skip_identifer(node) {
             let name = node.utf8_text(&self.source).unwrap().to_owned();
             let range = get_node_range(node);
-            let used = true;
-            let data = IdentiferData { name, range, used };
+            let data = Identifier { name, range };
 
             self.identifiers.push(data);
         }
@@ -310,7 +306,7 @@ impl<'a> Analyzer<'a> {
 
         for child in iterator.named_children(&mut cursor) {
             let name = child.utf8_text(&self.source).unwrap();
-            let kind = DeclarationKind::Variable(VariableType::Any);
+            let kind = DeclarationKind::Variable;
             let range = get_node_range(&iterator);
             let name_range = get_node_range(&child);
             let scope = Some(get_node_range(&body));
@@ -329,40 +325,6 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    // TODO: dynamic type resolution
-    fn get_var_type(&mut self, node: &Node) -> VariableType {
-        match NodeType::from(node) {
-            NodeType::ExprLiteral => {
-                let literal = node.child(0).unwrap();
-
-                match literal.kind() {
-                    "number" => VariableType::Number,
-                    "string" => VariableType::String,
-                    "boolean" => VariableType::Boolean,
-                    "null" => VariableType::Null,
-                    _ => VariableType::Any,
-                }
-            }
-            NodeType::ExprObject => {
-                let mut props = Vec::new();
-                let mut cursor = Node::walk(&node);
-
-                for prop in node.children(&mut cursor) {
-                    if NodeType::from(&prop) == NodeType::Prop {
-                        let name_node = prop.child_by_field_name("name").unwrap();
-                        let name = name_node.utf8_text(&self.source).unwrap();
-
-                        props.push(name.to_owned())
-                    }
-                }
-
-                VariableType::Object(props)
-            }
-            NodeType::ExprArray => VariableType::Array,
-            _ => VariableType::Any,
-        }
-    }
-
     fn get_function_args(&self, node: &Node) -> (Vec<String>, Vec<Declaration>) {
         let mut names = Vec::new();
         let mut declarations = Vec::new();
@@ -378,7 +340,7 @@ impl<'a> Analyzer<'a> {
 
             let name = arg.utf8_text(&self.source).unwrap();
             let name_range = get_node_range(&arg);
-            let kind = DeclarationKind::Variable(VariableType::Any);
+            let kind = DeclarationKind::Variable;
             let scope = Some(get_node_range(&body));
             let decl = Declaration::new(name.to_string(), kind, range, name_range, scope, true);
 
@@ -386,7 +348,7 @@ impl<'a> Analyzer<'a> {
             declarations.push(decl)
         }
 
-        let kind = DeclarationKind::Variable(VariableType::Any);
+        let kind = DeclarationKind::Variable;
         let scope = Some(get_node_range(&body));
         let decl = Declaration::new("self".to_owned(), kind, *NIL_RANGE, *NIL_RANGE, scope, true);
         declarations.push(decl);
@@ -427,9 +389,11 @@ impl<'a> Analyzer<'a> {
 
     fn resolve_identifiers(&mut self) {
         for ident in &self.identifiers {
-            let is_declared = self.declarations.is_declared_at(&ident);
+            let decl = self.declarations.get_mut(&ident);
 
-            if !is_declared {
+            if let Some(decl) = decl {
+                decl.used = true;
+            } else {
                 self.diagnostics.push(error(
                     ErrorKind::Undeclared(ident.name.to_owned()),
                     ident.range,

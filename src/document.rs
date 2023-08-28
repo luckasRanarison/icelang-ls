@@ -7,7 +7,7 @@ pub struct Document {
     pub content: String,
     pub tree: Tree,
     pub parser: Parser,
-    pub declarations: DeclarationMap,
+    pub declarations: DeclarationMap, // FIXME: use symbol table
 }
 
 impl Document {
